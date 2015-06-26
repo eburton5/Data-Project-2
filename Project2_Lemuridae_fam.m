@@ -1,0 +1,167 @@
+%% Goal of this script: calculate the cP distance between submeshes (size 400 pts) from family Lemuridae
+% Hapalemur genus: x23, v13, v09 (replaced with v12 as of 6/25/15)
+% Eulemur genus: t12, t14, x08
+% Lemur genus: x02, x07, x09, x17
+%% Preparation
+% clear vars; 
+% close all;
+path(pathdef);
+addpath(path,genpath([pwd '/utils/']));
+addpath(path,genpath([pwd '/PNAS/meshes']));
+
+%%  Set Parameters for later
+options.FeatureType = 'ConfMax';
+options.NumDensityPnts = 100;
+options.AngleIncrement = 0.05;
+options.NumFeatureMatch = 4;
+options.GaussMinMatch = 'on';
+
+%% Prepare meshes
+Lemuridae = cell(1,10);
+% Load Hapalemur genus
+Lemuridae{1} = load('./samples/PNAS/x23.mat'); Lemuridae{1} = Lemuridae{1}.G;
+Lemuridae{2} = load('./samples/PNAS/v13.mat'); Lemuridae{2} = Lemuridae{2}.G;
+Lemuridae{3} = load('v12_full.mat'); Lemuridae{3} = Lemuridae{3}.G;
+% Lemuridae{3} = load('./samples/PNAS/v09.mat'); Lemuridae{3} = Lemuridae{3}.G;
+% Load Eulemer genus
+Lemuridae{4} = load('./samples/PNAS/t12.mat'); Lemuridae{4} = Lemuridae{4}.G;
+Lemuridae{5} = load('./samples/PNAS/t14.mat'); Lemuridae{5} = Lemuridae{5}.G;
+Lemuridae{6} = load('./samples/PNAS/x08.mat'); Lemuridae{6} = Lemuridae{6}.G;
+%Load Lemur genus
+Lemuridae{7} = load('./samples/PNAS/x02.mat'); Lemuridae{7} = Lemuridae{7}.G;
+Lemuridae{8} = load('./samples/PNAS/x07.mat'); Lemuridae{8} = Lemuridae{8}.G;
+Lemuridae{9} = load('./samples/PNAS/x09.mat'); Lemuridae{9} = Lemuridae{9}.G;
+Lemuridae{10} = load('./samples/PNAS/x17.mat'); Lemuridae{10} = Lemuridae{10}.G;
+
+%% delete isolated vertices
+for j=1:10
+    ConfMax = Lemuridae{j}.V(:,Lemuridae{j}.Aux.ConfMaxInds);
+    GaussMax = Lemuridae{j}.V(:,Lemuridae{j}.Aux.GaussMaxInds);
+    GaussMin = Lemuridae{j}.V(:,Lemuridae{j}.Aux.GaussMinInds);
+    ADMax = Lemuridae{j}.V(:,Lemuridae{j}.Aux.ADMaxInds);
+    
+    dVInds = Lemuridae{j}.DeleteIsolatedVertex();
+    if ~isempty(dVInds) %% recompute uniformization
+        [Lemuridae{j}.Aux.Area,Lemuridae{j}.Aux.Center] = Lemuridae{j}.Centralize('ScaleArea');
+        [Lemuridae{j}.BV, Lemuridae{j}.BE] = Lemuridae{j}.FindBoundaries();
+        ConfMax = (ConfMax-repmat(Lemuridae{j}.Aux.Center,1,size(ConfMax,2)))/sqrt(Lemuridae{j}.Aux.Area);
+        GaussMax = (GaussMax-repmat(Lemuridae{j}.Aux.Center,1,size(GaussMax,2)))/sqrt(Lemuridae{j}.Aux.Area);
+        GaussMin = (GaussMin-repmat(Lemuridae{j}.Aux.Center,1,size(GaussMin,2)))/sqrt(Lemuridae{j}.Aux.Area);
+        ADMax = (ADMax-repmat(Lemuridae{j}.Aux.Center,1,size(ADMax,2)))/sqrt(Lemuridae{j}.Aux.Area);
+        
+        Lemuridae{j}.ComputeMidEdgeUniformization(options);
+        Lemuridae{j}.Nf = Lemuridae{j}.ComputeFaceNormals;
+        Lemuridae{j}.Nv = Lemuridae{j}.F2V'*Lemuridae{j}.Nf';
+        Lemuridae{j}.Nv = Lemuridae{j}.Nv'*diag(1./sqrt(sum((Lemuridae{j}.Nv').^2,1)));
+        Lemuridae{j}.Aux.LB = Lemuridae{j}.ComputeCotanLaplacian;
+        
+        TREE = kdtree_build(Lemuridae{j}.V');
+        Lemuridae{j}.Aux.ConfMaxInds = kdtree_nearest_neighbor(TREE, ConfMax');
+        Lemuridae{j}.Aux.GaussMaxInds = kdtree_nearest_neighbor(TREE, GaussMax');
+        Lemuridae{j}.Aux.GaussMinInds = kdtree_nearest_neighbor(TREE, GaussMin');
+        Lemuridae{j}.Aux.ADMaxInds = kdtree_nearest_neighbor(TREE, ADMax');
+    end
+end
+
+save('Lemuridae_all.mat','Lemuridae');
+
+NumPts = 400;
+rng('shuffle');
+
+% preallocations for speed
+i = zeros(1,10);
+DLem = cell(1,10);
+subV = cell(1,10);
+subF = cell(1,10);
+Lem = cell(1,10);
+
+for j = 1:10 
+    i(j) = randi(Lemuridae{j}.nV); % generate random starting point, will be different every time
+    % get subsampled mesh
+    subV{j} = Lemuridae{j}.GeodesicFarthestPointSampling(NumPts,i(j));
+    [subV{j},subF{j}] = PerformGeodesicDelauneyTriangulation(Lemuridae{j},subV{j},[]); % Create new mesh for subsample
+    Lem{j} = Mesh('VF',subV{j},subF{j});
+    % compute uniformization for subsampled mesh
+    [Lem{j}.Aux.Area, Lem{j}.Aux.Center] = Lem{j}.Centralize('ScaleArea');
+    [~,TriAreas] = Lem{j}.ComputeSurfaceArea;
+    Lem{j}.Aux.VertArea = (TriAreas'*Lem{j}.F2V)/3;
+    DLem{j} = Lem{j}.ComputeCPMS().ComputeUniformization(struct('method','LSCM','boundary_conditions','disc'));
+%     Lem{j}.ComputeMidEdgeUniformization(options); % beginning of midedge uniformization addition
+%     Lem{j}.Nf = Lem{j}.ComputeFaceNormals;
+%     Lem{j}.Nv = Lem{j}.F2V'*Lem{j}.Nf';
+%     Lem{j}.Nv = Lem{j}.Nv'*diag(1./sqrt(sum((Lem{j}.Nv').^2,1)));
+%     Lem{j}.Aux.LB = Lem{j}.ComputeCotanLaplacian; % end of midedge uniformization addition
+    Lem{j}.Aux.UniformizationV = DLem{j}.V;
+%%%     Estimate conformal factor using area distortion
+    [~,AG] = Lem{j}.ComputeSurfaceArea;
+    [~,DG] = DLem{j}.ComputeSurfaceArea;
+    Lem{j}.Aux.Conf = (AG./DG)'*DLem{j}.F2V/3;
+%%%     set the G.Aux.Conf to 0 on the boundary
+    [Lem{j}.BV,Lem{j}.BE] = Lem{j}.FindBoundaries();
+    Lem{j}.Aux.Conf(Lem{j}.BV) = 0;
+
+%%%     keep features on the original fine mesh for the downsampled mesh
+    TREE = kdtree_build(Lem{j}.V');
+    Lem{j}.Aux.ConfMaxInds = kdtree_nearest_neighbor(TREE, Lemuridae{j}.V(:,Lemuridae{j}.Aux.ConfMaxInds)');
+    %% similarly, find nearest neighbors of
+    %%%% G.Aux.ADMaxInds, G.Aux.GaussMaxInds, G.Aux.GaussMinInds
+    Lem{j}.Aux.ADMaxInds = kdtree_nearest_neighbor(TREE, Lemuridae{j}.V(:,Lemuridae{j}.Aux.ADMaxInds)');
+    Lem{j}.Aux.GaussMaxInds = kdtree_nearest_neighbor(TREE, Lemuridae{j}.V(:,Lemuridae{j}.Aux.GaussMaxInds)');
+    Lem{j}.Aux.GaussMinInds = kdtree_nearest_neighbor(TREE, Lemuridae{j}.V(:,Lemuridae{j}.Aux.GaussMinInds)');
+
+    %%% finding density points
+    minds = [Lem{j}.Aux.GaussMaxInds;Lem{j}.Aux.GaussMinInds;Lem{j}.Aux.ConfMaxInds];
+    minds = unique(minds);
+    Lem{j}.Aux.DensityPnts = Lem{j}.GeodesicFarthestPointSampling(Lem{j}.nV,minds);
+end
+save('Lem_all.mat','Lem');
+
+%% delete isolated vertices
+for j=1:10
+    ConfMax = Lem{j}.V(:,Lem{j}.Aux.ConfMaxInds);
+    GaussMax = Lem{j}.V(:,Lem{j}.Aux.GaussMaxInds);
+    GaussMin = Lem{j}.V(:,Lem{j}.Aux.GaussMinInds);
+    ADMax = Lem{j}.V(:,Lem{j}.Aux.ADMaxInds);
+    
+    dVInds = Lem{j}.DeleteIsolatedVertex();
+    if ~isempty(dVInds) %% recompute uniformization
+        [Lem{j}.Aux.Area,Lem{j}.Aux.Center] = Lem{j}.Centralize('ScaleArea');
+        [Lem{j}.BV, Lem{j}.BE] = Lem{j}.FindBoundaries();
+        ConfMax = (ConfMax-repmat(Lem{j}.Aux.Center,1,size(ConfMax,2)))/sqrt(Lem{j}.Aux.Area);
+        GaussMax = (GaussMax-repmat(Lem{j}.Aux.Center,1,size(GaussMax,2)))/sqrt(Lem{j}.Aux.Area);
+        GaussMin = (GaussMin-repmat(Lem{j}.Aux.Center,1,size(GaussMin,2)))/sqrt(Lem{j}.Aux.Area);
+        ADMax = (ADMax-repmat(Lem{j}.Aux.Center,1,size(ADMax,2)))/sqrt(Lem{j}.Aux.Area);
+        
+        Lem{j}.ComputeMidEdgeUniformization(options);
+        Lem{j}.Nf = Lem{j}.ComputeFaceNormals;
+        Lem{j}.Nv = Lem{j}.F2V'*Lem{j}.Nf';
+        Lem{j}.Nv = Lem{j}.Nv'*diag(1./sqrt(sum((Lem{j}.Nv').^2,1)));
+        Lem{j}.Aux.LB = Lem{j}.ComputeCotanLaplacian;
+        
+        TREE = kdtree_build(Lem{j}.V');
+        Lem{j}.Aux.ConfMaxInds = kdtree_nearest_neighbor(TREE, ConfMax');
+        Lem{j}.Aux.GaussMaxInds = kdtree_nearest_neighbor(TREE, GaussMax');
+        Lem{j}.Aux.GaussMinInds = kdtree_nearest_neighbor(TREE, GaussMin');
+        Lem{j}.Aux.ADMaxInds = kdtree_nearest_neighbor(TREE, ADMax');
+    end
+end
+
+save('Lem_all.mat','Lem');
+
+%% Create cP distance matrix
+cPDist_Lemuridae = zeros(10);
+rslt_fam = cell(10);
+for i = 1:10
+    for j = 1:10
+        try
+            rslt_fam{i,j} = ComputeContinuousProcrustes4(Lem{i},Lem{j},options); 
+            cPDist_Lemuridae(i,j) = rslt_fam{i,j}.cPdist;
+        catch
+            rslt_fam{i,j} = ComputeContinuousProcrustes4(Lem{j},Lem{i},options); 
+            cPDist_Lemuridae(i,j) = rslt_fam{i,j}.cPdist;
+        end
+    end
+end
+
+%% save data
+save('Lem_allRslt.mat','cPDist_Lemuridae');
