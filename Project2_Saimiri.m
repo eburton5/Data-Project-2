@@ -52,7 +52,7 @@ options.GaussMinMatch = 'on';
 % save('Saimiri_all.mat', 'Saimiri'); %these can be used forever
 
 %% delete isolated vertices
-for j=1:10
+for j=1:15
     ConfMax = Saimiri{j}.V(:,Saimiri{j}.Aux.ConfMaxInds);
     GaussMax = Saimiri{j}.V(:,Saimiri{j}.Aux.GaussMaxInds);
     GaussMin = Saimiri{j}.V(:,Saimiri{j}.Aux.GaussMinInds);
